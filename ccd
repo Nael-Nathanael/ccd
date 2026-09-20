@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# ccd [N] [claude args...] — run Claude Code as profile N.
+# Profile 1 is plain `claude`. Profile N > 1 is ~/.claude-profile-N: its own login,
+# everything else shared with ~/.claude through symlinks.
+set -euo pipefail
+
+base="$HOME/.claude"
+shared=(projects history.jsonl file-history CLAUDE.md hooks settings.json plugins skills rules agents commands)
+
+n=1
+if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+    n=$((10#$1))
+    shift
+fi
+
+# shellcheck disable=SC2086
+((n <= 1)) && exec claude ${CCD_ARGS:-} "$@"
+
+dir="$HOME/.claude-profile-$n"
+
+if [[ ! -d "$dir" ]]; then
+    echo "ccd: creating profile $n in $dir" >&2
+    mkdir -p "$dir"
+
+    # User-scope MCP servers live in .claude.json, which is per profile. Seed the new one
+    # from whichever of profile 1's files is in use; Claude Code fills in the rest.
+    src="$HOME/.claude.json"
+    [[ "$base/.claude.json" -nt "$src" ]] && src="$base/.claude.json"
+    if [[ ! -f "$src" ]]; then
+        :
+    elif command -v jq >/dev/null; then
+        (umask 077 && jq '{mcpServers: (.mcpServers // {})}' "$src" >"$dir/.claude.json")
+    else
+        echo "ccd: jq not found, MCP servers not copied to profile $n" >&2
+    fi
+fi
+
+# Every start, so items added to ~/.claude later are picked up.
+for f in "${shared[@]}"; do
+    if [[ -e "$base/$f" && ! -e "$dir/$f" && ! -L "$dir/$f" ]]; then
+        ln -s "$base/$f" "$dir/$f"
+    fi
+done
+
+# shellcheck disable=SC2086
+CLAUDE_CONFIG_DIR="$dir" exec claude ${CCD_ARGS:-} "$@"
