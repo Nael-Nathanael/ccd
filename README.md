@@ -21,6 +21,26 @@ That's the whole thing. One file of bash, no daemon, no config.
 You log in once per profile. Switching never logs anything out. Run them side by
 side in two terminals if you like.
 
+## Is this allowed?
+
+Anthropic's own docs describe this setup:
+
+> To stay signed in to multiple accounts at once, such as work and personal
+> accounts, give each account its own configuration directory.
+
+That's from [Log in with multiple accounts](https://code.claude.com/docs/en/authentication)
+in the Claude Code docs. `ccd` sets that directory for you. It runs the official
+`claude` as is. You sign in through Claude's own `/login`, and `ccd` never
+touches your login token.
+
+The usual rules still apply to every account. Each one is yours, so don't share
+it or its login with anyone else
+([Consumer Terms](https://www.anthropic.com/legal/consumer-terms), section 2).
+Plan limits also assume ordinary, individual use
+([Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)).
+
+This is a plain reading of Anthropic's public docs, not legal advice.
+
 ## Install
 
 ```
