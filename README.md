@@ -1,9 +1,8 @@
 # ccd: multiple Claude Code profiles on one machine
 
-Two Claude subscriptions? Work account and personal account? Hit the limit on
-one and want to keep going on the other?
+A work account and a personal account? A client's team plan next to your own?
 
-Claude Code only remembers one login. `ccd` gives you as many as you want, and
+Claude Code only remembers one login. `ccd` gives each account its own, and
 they all share the same history, settings and projects.
 
 ```
@@ -88,8 +87,7 @@ are symlinks, so they stay where they were, in `~/.claude`.
 
 On KDE Plasma?
 [claude-limits-plasmoid](https://github.com/Nael-Nathanael/claude-limits-plasmoid)
-shows the 5-hour and weekly usage of each profile in the top bar, so you can see
-which account still has room.
+shows the 5-hour and weekly usage of each profile in the top bar.
 
 ## License
 
