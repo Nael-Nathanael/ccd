@@ -9,7 +9,8 @@ they all share the same history, settings and projects.
 ccd 2
 ```
 
-That's the whole thing. One file of bash, no daemon, no config.
+That's the whole thing. One short script per system, no daemon, no config. Works on macOS,
+Linux and Windows.
 
 ## TL;DR
 
@@ -43,13 +44,44 @@ This is a plain reading of Anthropic's public docs, not legal advice.
 
 ## Install
 
+`~/.local/bin` is the folder Claude Code's own installer uses, so it is usually
+on your PATH already.
+
+### macOS and Linux
+
+In Terminal:
+
 ```
 git clone https://github.com/Nael-Nathanael/ccd
+mkdir -p ~/.local/bin
 install -m 755 ccd/ccd ~/.local/bin/ccd
 ```
 
-You need `bash` and `claude`. If you have `jq` too, new profiles start with your
-MCP servers already set up.
+You need `claude`. The bash that ships with macOS is fine. If you have `jq` too
+(macOS 15 and later include it), new profiles start with your MCP servers
+already set up.
+
+### Windows
+
+In PowerShell:
+
+```
+git clone https://github.com/Nael-Nathanael/ccd
+New-Item -ItemType Directory -Force "$HOME\.local\bin" | Out-Null
+Copy-Item ccd\ccd.ps1 "$HOME\.local\bin\"
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+The last line lets PowerShell run scripts you have on disk. Windows blocks them
+by default. Skip it if `Get-ExecutionPolicy` already says `RemoteSigned`.
+
+Then turn on **Developer Mode** (Settings, search "developer"). Without it,
+Windows won't let `ccd` link `settings.json`, `CLAUDE.md` and `history.jsonl`
+into a profile, so those stay separate. `ccd` tells you when that happens.
+Folders are shared either way.
+
+Run `ccd` from PowerShell or Windows Terminal. Command Prompt (`cmd`) is not
+supported.
 
 ## Use
 
@@ -63,12 +95,13 @@ ccd --resume   # no number means profile 1
 Tired of typing the same flags? Put them in `CCD_ARGS`:
 
 ```
-export CCD_ARGS="--dangerously-skip-permissions"
+export CCD_ARGS="--dangerously-skip-permissions"        # macOS, Linux
+$env:CCD_ARGS = "--dangerously-skip-permissions"        # Windows PowerShell
 ```
 
 ## What's shared, what isn't
 
-Shared by every profile, because they are symlinks back to `~/.claude`:
+Shared by every profile, because they are links back to `~/.claude`:
 
 projects, conversation history, settings, `CLAUDE.md`, hooks, plugins, skills,
 rules, agents, commands.
@@ -92,16 +125,28 @@ shared things in `~/.claude`. It does this on every start and skips what is
 already there, so a folder you create in `~/.claude` next month shows up in
 every profile by itself.
 
+On Windows, `ccd.ps1` does the same with junctions for folders and symlinks for
+files. Junctions are Windows' folder links and need no special rights. The
+login is kept per profile on every system, in the macOS Keychain or in the
+profile's `.credentials.json`.
+
 Profile 1 gets none of this. `ccd` and `ccd 1` run plain `claude`.
 
 ## Remove a profile
+
+macOS and Linux:
 
 ```
 rm -rf ~/.claude-profile-2
 ```
 
+Windows: delete the `.claude-profile-2` folder in your user folder with File
+Explorer. Explorer removes the links, not what they point to. Avoid
+`Remove-Item -Recurse` here: its handling of links
+[has had bugs](https://github.com/PowerShell/PowerShell/issues/16664).
+
 That throws away the profile's login and its MCP list. Your history and settings
-are symlinks, so they stay where they were, in `~/.claude`.
+are links, so they stay where they were, in `~/.claude`.
 
 ## Usage limits in your panel
 
