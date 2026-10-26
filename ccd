@@ -18,9 +18,85 @@ fi
 
 dir="$HOME/.claude-profile-$n"
 
+# Ask how a new profile signs in. Regular leaves it to /login. API sets $api_key and $api_env
+# (URL and model as KEY=VALUE lines), once the endpoint answers and its models are listed.
+ask_auth() {
+    local mode url key kcfg code body ids models m pick i
+    while :; do
+        read -rp "Sign in via [1] regular (/login) or [2] API? [1] " mode
+        [[ "${mode:-1}" == 2 ]] || return 0
+        command -v curl >/dev/null || { echo "ccd: API sign-in needs curl, using regular" >&2; return 0; }
+        read -rp "Base URL [https://api.anthropic.com]: " url
+        url="${url:-https://api.anthropic.com}"
+        url="${url%/}"
+        url="${url%/v1}"
+        [[ "$url" != http://* ]] || echo "ccd: warning, http:// sends your key unencrypted" >&2
+        read -rsp "API key: " key
+        echo
+        [[ -n "$key" ]] || { echo "ccd: no key given, starting over" >&2; continue; }
+
+        echo "Testing connection..." >&2
+        body=$(mktemp)
+        # Sent the way Claude Code will send it (both headers), on stdin so `ps` never sees it.
+        kcfg=${key//\\/\\\\}
+        kcfg=${kcfg//\"/\\\"}
+        code=$(curl -sS -m 20 -o "$body" -w '%{http_code}' -K - "$url/v1/models?limit=1000" \
+            <<<"header = \"x-api-key: $kcfg\"
+header = \"authorization: Bearer $kcfg\"
+header = \"anthropic-version: 2023-06-01\"") || code=000
+        models=()
+        if [[ "$code" == 200 ]]; then
+            if command -v jq >/dev/null; then
+                jq -e '.data | type == "array"' "$body" >/dev/null 2>&1 || code="200, but not a model list"
+            else
+                grep -q '"data"' "$body" || code="200, but not a model list"
+            fi
+        fi
+        if [[ "$code" != 200 ]]; then
+            rm -f "$body"
+            echo "ccd: connection failed (HTTP $code), starting over" >&2
+            continue
+        fi
+        if command -v jq >/dev/null; then
+            ids=$(jq -r '.data[]?.id' "$body" 2>/dev/null)
+        else
+            ids=$(grep -o '"id" *: *"[^"]*"' "$body" | cut -d'"' -f4)
+        fi
+        rm -f "$body"
+        while IFS= read -r m; do
+            if [[ -n "$m" ]]; then models+=("$m"); fi
+        done <<<"$ids"
+
+        echo "Connected." >&2
+        pick=""
+        if ((${#models[@]})); then
+            for i in "${!models[@]}"; do echo "  $((i + 1))) ${models[i]}" >&2; done
+            while :; do
+                read -rp "Default model (number or name, enter to skip): " pick
+                if [[ ! "$pick" =~ ^[0-9]+$ ]]; then break; fi
+                if ((10#$pick >= 1 && 10#$pick <= ${#models[@]})); then
+                    pick="${models[10#$pick - 1]}"
+                    break
+                fi
+                echo "ccd: no model number $pick" >&2
+            done
+        fi
+        api_key="$key"
+        api_env="ANTHROPIC_BASE_URL=$url"$'\n'
+        if [[ -n "$pick" ]]; then api_env+="ANTHROPIC_MODEL=$pick"$'\n'; fi
+        return 0
+    done
+}
+
+api_key=""
+api_env=""
 if [[ ! -d "$dir" ]]; then
+    [[ -t 0 && -t 1 ]] && ask_auth
     echo "ccd: creating profile $n in $dir" >&2
     mkdir -p "$dir"
+    if [[ -n "$api_key" ]]; then
+        (umask 077 && printf '%s' "$api_key" >"$dir/ccd.key" && printf '%s' "$api_env" >"$dir/ccd.env")
+    fi
 
     # User-scope MCP servers live in .claude.json, which is per profile. Seed the new one
     # from whichever of profile 1's files is in use; Claude Code fills in the rest.
@@ -41,6 +117,23 @@ for f in "${shared[@]}"; do
         ln -s "$base/$f" "$dir/$f"
     fi
 done
+
+# API profiles keep the key in ccd.key and the URL and model in ccd.env. The key reaches Claude
+# Code through apiKeyHelper, so it never sits in the environment of hooks and tools. Variables
+# from the parent shell must not override the profile. ccd.env is read as data, never sourced.
+if [[ -f "$dir/ccd.key" ]]; then
+    unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL ANTHROPIC_MODEL
+    if [[ -f "$dir/ccd.env" ]]; then
+        while IFS='=' read -r k v || [[ -n "$k" ]]; do
+            v=${v%$'\r'}
+            case "$k" in ANTHROPIC_BASE_URL | ANTHROPIC_MODEL) export "$k=$v" ;; esac
+        done <"$dir/ccd.env"
+    fi
+    helper="cat $(printf '%q' "$dir/ccd.key")"
+    helper=${helper//\\/\\\\}
+    helper=${helper//\"/\\\"}
+    set -- --settings "{\"apiKeyHelper\":\"$helper\"}" "$@"
+fi
 
 # shellcheck disable=SC2086
 CLAUDE_CONFIG_DIR="$dir" exec claude ${CCD_ARGS:-} "$@"

@@ -99,6 +99,33 @@ export CCD_ARGS="--dangerously-skip-permissions"        # macOS, Linux
 $env:CCD_ARGS = "--dangerously-skip-permissions"        # Windows PowerShell
 ```
 
+## Sign in with an API key
+
+When `ccd` creates a new profile in a terminal, it asks how that profile signs in:
+
+1. **Regular.** You type `/login` inside Claude Code, as usual.
+2. **API.** `ccd` asks for the base URL (press Enter for `https://api.anthropic.com`)
+   and the API key, then tests them against `/v1/models`. If the test fails, it
+   starts over. If it works, it lists the server's models and lets you pick a
+   default.
+
+The test sends the key as both `x-api-key` and `Authorization: Bearer`, the way
+Claude Code does, so gateways that want either one work. It needs `curl` on
+macOS and Linux, and a base URL that answers `/v1/models` with a model list.
+
+An API profile keeps its key in `ccd.key` and its URL and model in `ccd.env`, both
+inside the profile folder (mode 600 on macOS and Linux). Every start, `ccd` sets
+`ANTHROPIC_BASE_URL` and `ANTHROPIC_MODEL` from `ccd.env` and hands the key to
+Claude Code through its `apiKeyHelper` setting. So the key never sits in the
+environment where hooks and tools could print it. Variables with the same names in
+your shell are cleared for that profile, and everything else stays shared as before.
+
+To change a value, edit the file. `ccd.env` holds plain `KEY=VALUE` lines with no
+quotes and no `export`. `ccd.key` holds only the key. Or delete the profile and
+make it again. Passing your own `--settings` after `ccd N` replaces the
+key helper (tested), so put extra settings in `~/.claude/settings.json` instead. The
+Windows version has not been run on Windows yet.
+
 ## What's shared, what isn't
 
 Shared by every profile, because they are links back to `~/.claude`:
@@ -108,7 +135,7 @@ rules, agents, commands.
 
 Separate for each profile:
 
-- The login. That's the point.
+- The login, or the API key, URL and model in `ccd.key` and `ccd.env`. That's the point.
 - The MCP server list, project trust prompts and first-run state. Claude Code
   keeps these in one file, `.claude.json`, next to the login. A new profile gets
   a copy of your MCP servers when it is created. After that, a server you add in
