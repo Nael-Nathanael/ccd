@@ -120,7 +120,11 @@ Claude Code through its `apiKeyHelper` setting. So the key never sits in the
 environment where hooks and tools could print it. Variables with the same names in
 your shell are cleared for that profile, and everything else stays shared as before.
 
-To change a value, edit the file. `ccd.env` holds plain `KEY=VALUE` lines with no
+To switch an existing profile, run `ccd 2 --reset-auth`. It asks the same
+questions again and keeps everything else. Choosing regular removes the API
+files, so `/login` applies again.
+
+To change one value, edit the file. `ccd.env` holds plain `KEY=VALUE` lines with no
 quotes and no `export`. `ccd.key` holds only the key. Or delete the profile and
 make it again. Passing your own `--settings` after `ccd N` replaces the
 key helper (tested), so put extra settings in `~/.claude/settings.json` instead. The

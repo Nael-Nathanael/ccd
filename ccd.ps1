@@ -15,6 +15,12 @@ if ($rest.Count -gt 0 -and "$($rest[0])" -match '^[0-9]+$') {
 }
 $extra = @("$env:CCD_ARGS" -split '\s+' | Where-Object { $_ })
 
+$reset = $rest.Count -gt 0 -and "$($rest[0])" -eq '--reset-auth'
+if ($reset) {
+    $rest = @($rest | Select-Object -Skip 1)
+    if ($n -le 1) { [Console]::Error.WriteLine('ccd: --reset-auth needs a profile number above 1'); exit 1 }
+}
+
 if ($n -le 1) {
     & claude @extra @rest
     exit $LASTEXITCODE
@@ -75,18 +81,32 @@ function Protect-File($path) {
     & icacls $path /inheritance:r /grant:r "${env:USERNAME}:(R,W)" | Out-Null
 }
 
+function Write-Api($api) {
+    if (-not $api) { return }
+    foreach ($pair in @(@('ccd.key', $api.Key), @('ccd.env', $api.Env))) {
+        $file = Join-Path $dir $pair[0]
+        [IO.File]::WriteAllText($file, $pair[1])
+        Protect-File $file
+    }
+}
+
+$tty = -not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected
+
+# Ask again for a profile that already exists. Regular removes the API files, so /login applies.
+if ($reset) {
+    if (-not (Test-Path -LiteralPath $dir)) { [Console]::Error.WriteLine("ccd: profile $n does not exist"); exit 1 }
+    if (-not $tty) { [Console]::Error.WriteLine('ccd: --reset-auth needs a terminal'); exit 1 }
+    $api = Read-Auth
+    Remove-Item -LiteralPath (Join-Path $dir 'ccd.key'), (Join-Path $dir 'ccd.env') -ErrorAction SilentlyContinue
+    Write-Api $api
+}
+
 if (-not (Test-Path -LiteralPath $dir)) {
     $api = $null
-    if (-not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected) { $api = Read-Auth }
+    if ($tty) { $api = Read-Auth }
     [Console]::Error.WriteLine("ccd: creating profile $n in $dir")
     New-Item -ItemType Directory -Path $dir | Out-Null
-    if ($api) {
-        foreach ($pair in @(@('ccd.key', $api.Key), @('ccd.env', $api.Env))) {
-            $file = Join-Path $dir $pair[0]
-            [IO.File]::WriteAllText($file, $pair[1])
-            Protect-File $file
-        }
-    }
+    Write-Api $api
 
     # User-scope MCP servers live in .claude.json, which is per profile. Seed the new one
     # from whichever of profile 1's files is in use; Claude Code fills in the rest.

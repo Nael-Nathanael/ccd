@@ -13,6 +13,14 @@ if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
     shift
 fi
 
+reset=0
+if [[ "${1:-}" == --reset-auth ]]; then
+    reset=1
+    shift
+fi
+
+((n > 1 || ! reset)) || { echo "ccd: --reset-auth needs a profile number above 1" >&2; exit 1; }
+
 # shellcheck disable=SC2086
 ((n <= 1)) && exec claude ${CCD_ARGS:-} "$@"
 
@@ -90,13 +98,26 @@ header = \"anthropic-version: 2023-06-01\"") || code=000
 
 api_key=""
 api_env=""
+write_api() {
+    if [[ -n "$api_key" ]]; then
+        (umask 077 && printf '%s' "$api_key" >"$dir/ccd.key" && printf '%s' "$api_env" >"$dir/ccd.env")
+    fi
+}
+
+# Ask again for a profile that already exists. Regular removes the API files, so /login applies.
+if ((reset)); then
+    [[ -d "$dir" ]] || { echo "ccd: profile $n does not exist" >&2; exit 1; }
+    [[ -t 0 && -t 1 ]] || { echo "ccd: --reset-auth needs a terminal" >&2; exit 1; }
+    ask_auth
+    rm -f "$dir/ccd.key" "$dir/ccd.env"
+    write_api
+fi
+
 if [[ ! -d "$dir" ]]; then
     [[ -t 0 && -t 1 ]] && ask_auth
     echo "ccd: creating profile $n in $dir" >&2
     mkdir -p "$dir"
-    if [[ -n "$api_key" ]]; then
-        (umask 077 && printf '%s' "$api_key" >"$dir/ccd.key" && printf '%s' "$api_env" >"$dir/ccd.env")
-    fi
+    write_api
 
     # User-scope MCP servers live in .claude.json, which is per profile. Seed the new one
     # from whichever of profile 1's files is in use; Claude Code fills in the rest.
