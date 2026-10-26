@@ -50,7 +50,7 @@ header = \"anthropic-version: 2023-06-01\"") || code=000
         return 1
     fi
     if command -v jq >/dev/null; then
-        ids=$(jq -r '.data[]?.id' "$body" 2>/dev/null)
+        ids=$(jq -r '.data[]?.id // empty' "$body" 2>/dev/null)
     else
         ids=$(grep -o '"id" *: *"[^"]*"' "$body" | cut -d'"' -f4)
     fi
@@ -164,24 +164,29 @@ if [[ -f "$dir/ccd.key" ]]; then
     helper=${helper//\"/\\\"}
     settings="{\"apiKeyHelper\":\"$helper\""
 
-    # Claude Code's own gateway discovery keeps only IDs containing "claude", so ccd lists the
-    # server's models in /model itself. Refreshed each start; the last good list is the fallback.
-    if [[ -n "${ANTHROPIC_BASE_URL:-}" ]] && command -v curl >/dev/null &&
-        list_models "$ANTHROPIC_BASE_URL" "$(<"$dir/ccd.key")" 3 2>/dev/null; then
-        (umask 077 && printf '%s\n' "$ids" >"$dir/ccd.models")
+    # Claude Code's own gateway discovery keeps only IDs containing "claude" or "anthropic", so
+    # ccd lists the server's models in /model itself. Refreshed each start; the last good list
+    # is the fallback.
+    # ccd.models starts with the URL it came from, so a list from another server is ignored.
+    url="${ANTHROPIC_BASE_URL:-}"
+    if [[ -n "$url" ]] && command -v curl >/dev/null &&
+        list_models "$url" "$(<"$dir/ccd.key")" 3 2>/dev/null && [[ -n "$ids" ]]; then
+        (umask 077 && printf '%s\n%s\n' "$url" "$ids" >"$dir/ccd.models")
     fi
-    if [[ -s "$dir/ccd.models" ]]; then
-        rows=""
+    rows=""
+    if [[ -f "$dir/ccd.models" ]] && { IFS= read -r m && [[ "$m" == "$url" ]]; } <"$dir/ccd.models"; then
         while IFS= read -r m; do
             [[ -n "$m" && ! "$m" =~ [[:cntrl:]] ]] || continue
             m=${m//\\/\\\\}
             m=${m//\"/\\\"}
             rows+="${rows:+,}{\"model\":\"$m\"}"
-        done <"$dir/ccd.models"
+        done < <(tail -n +2 "$dir/ccd.models")
+    fi
+    if [[ -n "$rows" ]]; then
         # Built-in rows send Anthropic IDs, which another server may not accept.
         replace=true
-        [[ "${ANTHROPIC_BASE_URL:-}" != https://api.anthropic.com ]] || replace=false
-        [[ -z "$rows" ]] || settings+=",\"modelPicker\":{\"replaceBuiltInOptions\":$replace,\"options\":[$rows]}"
+        [[ "$url" != https://api.anthropic.com ]] || replace=false
+        settings+=",\"modelPicker\":{\"replaceBuiltInOptions\":$replace,\"options\":[$rows]}"
     fi
     set -- --settings "$settings}" "$@"
 fi
