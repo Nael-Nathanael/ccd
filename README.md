@@ -99,6 +99,22 @@ export CCD_ARGS="--dangerously-skip-permissions"        # macOS, Linux
 $env:CCD_ARGS = "--dangerously-skip-permissions"        # Windows PowerShell
 ```
 
+## Sign in with an API key
+
+When `ccd` creates a new profile in a terminal, it asks how that profile signs in:
+
+1. **Regular.** You type `/login` inside Claude Code, as usual.
+2. **API.** `ccd` asks for the base URL (press Enter for `https://api.anthropic.com`)
+   and the API key, then tests them against `/v1/models`. If the test fails, it
+   starts over. If it works, it lists the server's models and lets you pick a
+   default.
+
+An API profile keeps its URL, key and model in `ccd.env` inside the profile
+folder (mode 600 on macOS and Linux). `ccd` sets them as `ANTHROPIC_BASE_URL`,
+`ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` every time it starts that profile.
+Claude Code asks once to approve the key. To change them, edit `ccd.env` or
+delete the profile and make it again.
+
 ## What's shared, what isn't
 
 Shared by every profile, because they are links back to `~/.claude`:
@@ -108,7 +124,7 @@ rules, agents, commands.
 
 Separate for each profile:
 
-- The login. That's the point.
+- The login, or the API key in `ccd.env`. That's the point.
 - The MCP server list, project trust prompts and first-run state. Claude Code
   keeps these in one file, `.claude.json`, next to the login. A new profile gets
   a copy of your MCP servers when it is created. After that, a server you add in

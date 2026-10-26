@@ -18,9 +18,59 @@ fi
 
 dir="$HOME/.claude-profile-$n"
 
+# Ask how a new profile signs in. Regular leaves it to /login. API sets $api_env to the
+# KEY=VALUE lines for ccd.env, once the endpoint answers and its models are listed.
+ask_auth() {
+    local mode url key code body models pick i
+    while :; do
+        read -rp "Sign in via [1] regular (/login) or [2] API? [1] " mode
+        [[ "${mode:-1}" == 2 ]] || return 0
+        read -rp "Base URL [https://api.anthropic.com]: " url
+        url="${url:-https://api.anthropic.com}"
+        url="${url%/}"
+        read -rsp "API key: " key
+        echo
+        [[ -n "$key" ]] || { echo "ccd: no key given, starting over" >&2; continue; }
+
+        echo "Testing connection..." >&2
+        body=$(mktemp)
+        # The key goes to curl on stdin, so it never shows in `ps`.
+        code=$(curl -sS -m 20 -o "$body" -w '%{http_code}' -K - "$url/v1/models?limit=1000" \
+            <<<"header = \"x-api-key: $key\"
+header = \"anthropic-version: 2023-06-01\"") || code=000
+        if [[ "$code" != 200 ]]; then
+            rm -f "$body"
+            echo "ccd: connection failed (HTTP $code), starting over" >&2
+            continue
+        fi
+        if command -v jq >/dev/null; then
+            mapfile -t models < <(jq -r '.data[]?.id' "$body" 2>/dev/null)
+        else
+            mapfile -t models < <(grep -o '"id" *: *"[^"]*"' "$body" | cut -d'"' -f4)
+        fi
+        rm -f "$body"
+
+        echo "Connected." >&2
+        pick=""
+        if ((${#models[@]})); then
+            for i in "${!models[@]}"; do echo "  $((i + 1))) ${models[i]}" >&2; done
+            read -rp "Default model (number or name, enter to skip): " pick
+            if [[ "$pick" =~ ^[0-9]+$ ]] && ((pick >= 1 && pick <= ${#models[@]})); then
+                pick="${models[pick - 1]}"
+            fi
+        fi
+        api_env="ANTHROPIC_BASE_URL=$url"$'\n'"ANTHROPIC_API_KEY=$key"$'\n'
+        [[ -z "$pick" ]] || api_env+="ANTHROPIC_MODEL=$pick"$'\n'
+        return 0
+    done
+}
+
+api_env=""
 if [[ ! -d "$dir" ]]; then
+    [[ -t 0 && -t 1 ]] && ask_auth
     echo "ccd: creating profile $n in $dir" >&2
     mkdir -p "$dir"
+    [[ -z "$api_env" ]] || (umask 077 && printf '%s' "$api_env" >"$dir/ccd.env")
 
     # User-scope MCP servers live in .claude.json, which is per profile. Seed the new one
     # from whichever of profile 1's files is in use; Claude Code fills in the rest.
@@ -41,6 +91,13 @@ for f in "${shared[@]}"; do
         ln -s "$base/$f" "$dir/$f"
     fi
 done
+
+# API profiles keep their endpoint, key and model here. Read as data, never sourced.
+if [[ -f "$dir/ccd.env" ]]; then
+    while IFS='=' read -r k v; do
+        case "$k" in ANTHROPIC_BASE_URL | ANTHROPIC_API_KEY | ANTHROPIC_MODEL) export "$k=$v" ;; esac
+    done <"$dir/ccd.env"
+fi
 
 # shellcheck disable=SC2086
 CLAUDE_CONFIG_DIR="$dir" exec claude ${CCD_ARGS:-} "$@"
