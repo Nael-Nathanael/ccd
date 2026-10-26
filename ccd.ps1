@@ -200,7 +200,10 @@ if (Test-Path -LiteralPath $keyFile) {
             }
         }
     }
-    $extra = @('--settings', (ConvertTo-Json -InputObject $settings -Compress -Depth 5)) + $extra
+    # Passed as a file: Windows PowerShell 5.1 strips the quotes from JSON given to a native program.
+    $settingsFile = Join-Path $dir 'ccd.settings.json'
+    [IO.File]::WriteAllText($settingsFile, (ConvertTo-Json -InputObject $settings -Compress -Depth 5))
+    $extra = @('--settings', $settingsFile) + $extra
 }
 try {
     & claude @extra @rest
