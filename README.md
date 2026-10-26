@@ -120,6 +120,13 @@ Claude Code through its `apiKeyHelper` setting. So the key never sits in the
 environment where hooks and tools could print it. Variables with the same names in
 your shell are cleared for that profile, and everything else stays shared as before.
 
+Every start, `ccd` also asks the server for its models again (3 second limit) and
+lists them in `/model`. Claude Code's own gateway discovery shows only models with
+"claude" in the name, so a router like 9router would lose its Gemini, GLM or Qwen
+models. On a server other than `https://api.anthropic.com`, the list replaces the
+built-in models, which that server may not accept. The last good list is kept in
+`ccd.models`, so `/model` still works while the server is down.
+
 To switch an existing profile, run `ccd 2 --reset-auth`. It asks the same
 questions again and keeps everything else. Choosing regular removes the API
 files, so `/login` applies again.
@@ -127,7 +134,8 @@ files, so `/login` applies again.
 To change one value, edit the file. `ccd.env` holds plain `KEY=VALUE` lines with no
 quotes and no `export`. `ccd.key` holds only the key. Or delete the profile and
 make it again. Passing your own `--settings` after `ccd N` replaces the
-key helper (tested), so put extra settings in `~/.claude/settings.json` instead. The
+key helper (tested), and with it the model list, so put extra settings in
+`~/.claude/settings.json` instead. The
 Windows version has not been run on Windows yet.
 
 ## What's shared, what isn't
@@ -139,7 +147,8 @@ rules, agents, commands.
 
 Separate for each profile:
 
-- The login, or the API key, URL and model in `ccd.key` and `ccd.env`. That's the point.
+- The login, or the API key, URL, model and model list in `ccd.key`, `ccd.env` and
+  `ccd.models`. That's the point.
 - The MCP server list, project trust prompts and first-run state. Claude Code
   keeps these in one file, `.claude.json`, next to the login. A new profile gets
   a copy of your MCP servers when it is created. After that, a server you add in

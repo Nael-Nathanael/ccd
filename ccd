@@ -26,10 +26,41 @@ fi
 
 dir="$HOME/.claude-profile-$n"
 
+# list_models URL KEY SECONDS: set $ids to the model IDs at URL, one per line. On failure,
+# return 1 with the reason in $code.
+list_models() {
+    local body kcfg
+    body=$(mktemp)
+    # Sent the way Claude Code will send it (both headers), on stdin so `ps` never sees it.
+    kcfg=${2//\\/\\\\}
+    kcfg=${kcfg//\"/\\\"}
+    code=$(curl -sS -m "$3" -o "$body" -w '%{http_code}' -K - "$1/v1/models?limit=1000" \
+        <<<"header = \"x-api-key: $kcfg\"
+header = \"authorization: Bearer $kcfg\"
+header = \"anthropic-version: 2023-06-01\"") || code=000
+    if [[ "$code" == 200 ]]; then
+        if command -v jq >/dev/null; then
+            jq -e '.data | type == "array"' "$body" >/dev/null 2>&1 || code="200, but not a model list"
+        else
+            grep -q '"data"' "$body" || code="200, but not a model list"
+        fi
+    fi
+    if [[ "$code" != 200 ]]; then
+        rm -f "$body"
+        return 1
+    fi
+    if command -v jq >/dev/null; then
+        ids=$(jq -r '.data[]?.id' "$body" 2>/dev/null)
+    else
+        ids=$(grep -o '"id" *: *"[^"]*"' "$body" | cut -d'"' -f4)
+    fi
+    rm -f "$body"
+}
+
 # Ask how a new profile signs in. Regular leaves it to /login. API sets $api_key and $api_env
 # (URL and model as KEY=VALUE lines), once the endpoint answers and its models are listed.
 ask_auth() {
-    local mode url key kcfg code body ids models m pick i
+    local mode url key models m pick i
     while :; do
         read -rp "Sign in via [1] regular (/login) or [2] API? [1] " mode
         [[ "${mode:-1}" == 2 ]] || return 0
@@ -44,33 +75,11 @@ ask_auth() {
         [[ -n "$key" ]] || { echo "ccd: no key given, starting over" >&2; continue; }
 
         echo "Testing connection..." >&2
-        body=$(mktemp)
-        # Sent the way Claude Code will send it (both headers), on stdin so `ps` never sees it.
-        kcfg=${key//\\/\\\\}
-        kcfg=${kcfg//\"/\\\"}
-        code=$(curl -sS -m 20 -o "$body" -w '%{http_code}' -K - "$url/v1/models?limit=1000" \
-            <<<"header = \"x-api-key: $kcfg\"
-header = \"authorization: Bearer $kcfg\"
-header = \"anthropic-version: 2023-06-01\"") || code=000
-        models=()
-        if [[ "$code" == 200 ]]; then
-            if command -v jq >/dev/null; then
-                jq -e '.data | type == "array"' "$body" >/dev/null 2>&1 || code="200, but not a model list"
-            else
-                grep -q '"data"' "$body" || code="200, but not a model list"
-            fi
-        fi
-        if [[ "$code" != 200 ]]; then
-            rm -f "$body"
+        if ! list_models "$url" "$key" 20; then
             echo "ccd: connection failed (HTTP $code), starting over" >&2
             continue
         fi
-        if command -v jq >/dev/null; then
-            ids=$(jq -r '.data[]?.id' "$body" 2>/dev/null)
-        else
-            ids=$(grep -o '"id" *: *"[^"]*"' "$body" | cut -d'"' -f4)
-        fi
-        rm -f "$body"
+        models=()
         while IFS= read -r m; do
             if [[ -n "$m" ]]; then models+=("$m"); fi
         done <<<"$ids"
@@ -109,7 +118,7 @@ if ((reset)); then
     [[ -d "$dir" ]] || { echo "ccd: profile $n does not exist" >&2; exit 1; }
     [[ -t 0 && -t 1 ]] || { echo "ccd: --reset-auth needs a terminal" >&2; exit 1; }
     ask_auth
-    rm -f "$dir/ccd.key" "$dir/ccd.env"
+    rm -f "$dir/ccd.key" "$dir/ccd.env" "$dir/ccd.models"
     write_api
 fi
 
@@ -153,7 +162,28 @@ if [[ -f "$dir/ccd.key" ]]; then
     helper="cat $(printf '%q' "$dir/ccd.key")"
     helper=${helper//\\/\\\\}
     helper=${helper//\"/\\\"}
-    set -- --settings "{\"apiKeyHelper\":\"$helper\"}" "$@"
+    settings="{\"apiKeyHelper\":\"$helper\""
+
+    # Claude Code's own gateway discovery keeps only IDs containing "claude", so ccd lists the
+    # server's models in /model itself. Refreshed each start; the last good list is the fallback.
+    if [[ -n "${ANTHROPIC_BASE_URL:-}" ]] && command -v curl >/dev/null &&
+        list_models "$ANTHROPIC_BASE_URL" "$(<"$dir/ccd.key")" 3 2>/dev/null; then
+        (umask 077 && printf '%s\n' "$ids" >"$dir/ccd.models")
+    fi
+    if [[ -s "$dir/ccd.models" ]]; then
+        rows=""
+        while IFS= read -r m; do
+            [[ -n "$m" && ! "$m" =~ [[:cntrl:]] ]] || continue
+            m=${m//\\/\\\\}
+            m=${m//\"/\\\"}
+            rows+="${rows:+,}{\"model\":\"$m\"}"
+        done <"$dir/ccd.models"
+        # Built-in rows send Anthropic IDs, which another server may not accept.
+        replace=true
+        [[ "${ANTHROPIC_BASE_URL:-}" != https://api.anthropic.com ]] || replace=false
+        [[ -z "$rows" ]] || settings+=",\"modelPicker\":{\"replaceBuiltInOptions\":$replace,\"options\":[$rows]}"
+    fi
+    set -- --settings "$settings}" "$@"
 fi
 
 # shellcheck disable=SC2086
