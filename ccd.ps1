@@ -28,11 +28,19 @@ if ($n -le 1) {
 
 $dir = Join-Path $HOME ".claude-profile-$n"
 
+# The model IDs at $url, sent the way Claude Code will send them: both headers. Throws on failure.
+function Get-ModelIds($url, $key, $timeout) {
+    # Windows PowerShell 5.1 may default to TLS versions api.anthropic.com refuses.
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $res = Invoke-RestMethod -UseBasicParsing -TimeoutSec $timeout -Uri "$url/v1/models?limit=1000" `
+        -Headers @{ 'x-api-key' = $key; 'Authorization' = "Bearer $key"; 'anthropic-version' = '2023-06-01' }
+    if ($res.data -isnot [array]) { throw 'HTTP 200, but not a model list' }
+    @($res.data | ForEach-Object { $_.id } | Where-Object { $_ })
+}
+
 # Ask how a new profile signs in. Regular leaves it to /login. API returns the key and the
 # KEY=VALUE lines for ccd.env (URL and model), once the endpoint answers and its models are listed.
 function Read-Auth {
-    # Windows PowerShell 5.1 may default to TLS versions api.anthropic.com refuses.
-    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     while ($true) {
         $mode = Read-Host 'Sign in via [1] regular (/login) or [2] API? [1]'
         if ($mode -ne '2') { return $null }
@@ -48,10 +56,7 @@ function Read-Auth {
 
         [Console]::Error.WriteLine('Testing connection...')
         try {
-            # Sent the way Claude Code will send it: both headers.
-            $res = Invoke-RestMethod -UseBasicParsing -TimeoutSec 20 -Uri "$url/v1/models?limit=1000" `
-                -Headers @{ 'x-api-key' = $key; 'Authorization' = "Bearer $key"; 'anthropic-version' = '2023-06-01' }
-            if ($res.data -isnot [array]) { throw 'HTTP 200, but not a model list' }
+            $models = Get-ModelIds $url $key 20
         } catch {
             $why = if ($_.Exception.Response) { "HTTP $([int]$_.Exception.Response.StatusCode)" } else { $_.Exception.Message }
             [Console]::Error.WriteLine("ccd: connection failed ($why), starting over")
@@ -59,7 +64,6 @@ function Read-Auth {
         }
 
         [Console]::Error.WriteLine('Connected.')
-        $models = @($res.data | ForEach-Object { $_.id } | Where-Object { $_ })
         $pick = ''
         if ($models.Count) {
             for ($i = 0; $i -lt $models.Count; $i++) { [Console]::Error.WriteLine("  $($i + 1)) $($models[$i])") }
@@ -97,7 +101,7 @@ if ($reset) {
     if (-not (Test-Path -LiteralPath $dir)) { [Console]::Error.WriteLine("ccd: profile $n does not exist"); exit 1 }
     if (-not $tty) { [Console]::Error.WriteLine('ccd: --reset-auth needs a terminal'); exit 1 }
     $api = Read-Auth
-    Remove-Item -LiteralPath (Join-Path $dir 'ccd.key'), (Join-Path $dir 'ccd.env') -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $dir 'ccd.key'), (Join-Path $dir 'ccd.env'), (Join-Path $dir 'ccd.models') -ErrorAction SilentlyContinue
     Write-Api $api
 }
 
@@ -166,7 +170,29 @@ if (Test-Path -LiteralPath $keyFile) {
         }
     }
     $helper = "powershell -NoProfile -Command `"Get-Content -Raw -LiteralPath '$keyFile'`""
-    $extra = @('--settings', (@{ apiKeyHelper = $helper } | ConvertTo-Json -Compress)) + $extra
+    $settings = @{ apiKeyHelper = $helper }
+
+    # Claude Code's own gateway discovery keeps only IDs containing "claude", so ccd lists the
+    # server's models in /model itself. Refreshed each start; the last good list is the fallback.
+    $modelsFile = Join-Path $dir 'ccd.models'
+    if ($env:ANTHROPIC_BASE_URL) {
+        try {
+            $ids = Get-ModelIds $env:ANTHROPIC_BASE_URL ([IO.File]::ReadAllText($keyFile)) 3
+            [IO.File]::WriteAllText($modelsFile, (($ids | ForEach-Object { "$_`n" }) -join ''))
+            Protect-File $modelsFile
+        } catch {}
+    }
+    if (Test-Path -LiteralPath $modelsFile) {
+        $rows = @(Get-Content -LiteralPath $modelsFile | Where-Object { $_ } | ForEach-Object { @{ model = $_ } })
+        if ($rows.Count) {
+            # Built-in rows send Anthropic IDs, which another server may not accept.
+            $settings.modelPicker = @{
+                replaceBuiltInOptions = $env:ANTHROPIC_BASE_URL -ne 'https://api.anthropic.com'
+                options = $rows
+            }
+        }
+    }
+    $extra = @('--settings', (ConvertTo-Json -InputObject $settings -Compress -Depth 5)) + $extra
 }
 try {
     & claude @extra @rest
