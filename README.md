@@ -122,10 +122,11 @@ your shell are cleared for that profile, and everything else stays shared as bef
 
 Every start, `ccd` also asks the server for its models again (3 second limit) and
 lists them in `/model`. Claude Code's own gateway discovery shows only models with
-"claude" in the name, so a router like 9router would lose its Gemini, GLM or Qwen
+"claude" or "anthropic" in the name, so a router like 9router would lose its Gemini, GLM or Qwen
 models. On a server other than `https://api.anthropic.com`, the list replaces the
 built-in models, which that server may not accept. The last good list is kept in
-`ccd.models`, so `/model` still works while the server is down.
+`ccd.models`, so `/model` still works while the server is down. A list saved from
+a different URL is not used.
 
 To switch an existing profile, run `ccd 2 --reset-auth`. It asks the same
 questions again and keeps everything else. Choosing regular removes the API

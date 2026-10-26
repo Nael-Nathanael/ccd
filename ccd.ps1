@@ -56,7 +56,8 @@ function Read-Auth {
 
         [Console]::Error.WriteLine('Testing connection...')
         try {
-            $models = Get-ModelIds $url $key 20
+            # @() because PowerShell unrolls a one-item result into a plain string.
+            $models = @(Get-ModelIds $url $key 20)
         } catch {
             $why = if ($_.Exception.Response) { "HTTP $([int]$_.Exception.Response.StatusCode)" } else { $_.Exception.Message }
             [Console]::Error.WriteLine("ccd: connection failed ($why), starting over")
@@ -172,22 +173,29 @@ if (Test-Path -LiteralPath $keyFile) {
     $helper = "powershell -NoProfile -Command `"Get-Content -Raw -LiteralPath '$keyFile'`""
     $settings = @{ apiKeyHelper = $helper }
 
-    # Claude Code's own gateway discovery keeps only IDs containing "claude", so ccd lists the
-    # server's models in /model itself. Refreshed each start; the last good list is the fallback.
+    # Claude Code's own gateway discovery keeps only IDs containing "claude" or "anthropic", so
+    # ccd lists the server's models in /model itself. Refreshed each start; the last good list
+    # is the fallback. ccd.models starts with the URL it came from, so a list from another
+    # server is ignored.
+    $url = "$env:ANTHROPIC_BASE_URL"
     $modelsFile = Join-Path $dir 'ccd.models'
-    if ($env:ANTHROPIC_BASE_URL) {
+    if ($url) {
         try {
-            $ids = Get-ModelIds $env:ANTHROPIC_BASE_URL ([IO.File]::ReadAllText($keyFile)) 3
-            [IO.File]::WriteAllText($modelsFile, (($ids | ForEach-Object { "$_`n" }) -join ''))
-            Protect-File $modelsFile
+            $ids = @(Get-ModelIds $url ([IO.File]::ReadAllText($keyFile).Trim()) 3)
+            if ($ids.Count) {
+                [IO.File]::WriteAllText($modelsFile, ((@($url) + $ids | ForEach-Object { "$_`n" }) -join ''))
+                Protect-File $modelsFile
+            }
         } catch {}
     }
-    if (Test-Path -LiteralPath $modelsFile) {
-        $rows = @(Get-Content -LiteralPath $modelsFile | Where-Object { $_ } | ForEach-Object { @{ model = $_ } })
+    $lines = @()
+    if (Test-Path -LiteralPath $modelsFile) { $lines = @(Get-Content -LiteralPath $modelsFile) }
+    if ($lines.Count -gt 1 -and $lines[0] -eq $url) {
+        $rows = @($lines | Select-Object -Skip 1 | Where-Object { $_ } | ForEach-Object { @{ model = $_ } })
         if ($rows.Count) {
             # Built-in rows send Anthropic IDs, which another server may not accept.
             $settings.modelPicker = @{
-                replaceBuiltInOptions = $env:ANTHROPIC_BASE_URL -ne 'https://api.anthropic.com'
+                replaceBuiltInOptions = $url -ne 'https://api.anthropic.com'
                 options = $rows
             }
         }
